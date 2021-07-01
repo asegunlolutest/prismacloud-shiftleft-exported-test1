@@ -1,7 +1,7 @@
 #!/bin/bash -l
 
-./twistcli coderepo scan --address https://$TL_CONSOLE -u $TL_USER -p $TL_PASS ./license  
-result=$(curl -k -u $TL_USER:$TL_PASS -H 'Content-Type: application/json' "https://$TL_CONSOLE/api/v1/coderepos-ci?limit=1&reverse=true&sort=scanTime"|jq '.[0].pass')
+./twistcli coderepo scan --address https://$PC_CONSOLE -u $PCUSER -p $PCPASS ./license  
+result=$(curl -k -u $PCUSER:$PCPASS -H 'Content-Type: application/json' "https://$PC_CONSOLE/api/v1/coderepos-ci?limit=1&reverse=true&sort=scanTime"|jq '.[0].pass')
 
 
 if [ "$result" == "true" ]; then

@@ -1,8 +1,8 @@
 #!/bin/bash -l
 
-vulnresult=$(curl -k -u $PCUSER:$PCPASS -H 'Content-Type: application/json' "$PC_CONSOLE/api/v1/registry?id=$CONTAINER_REGISTRY/$IMAGE_NAME&limit=1&reverse=true&sort=scanTime"|jq '.[-1].vulnerabilitiesCount')
+vulnresult=$(curl -k -u $PCUSER:$PCPASS -H 'Content-Type: application/json' "$PC_CONSOLE/api/v1/registry?id=$ACR_FQDN/$IMAGE_NAME&limit=1&reverse=true&sort=scanTime"|jq '.[-1].vulnerabilitiesCount')
 
-complianceresult=$(curl -k -u $PCUSER:$PCPASS -H 'Content-Type: application/json' "$PC_CONSOLE/api/v1/registry?id=$CONTAINER_REGISTRY/$IMAGE_NAME&limit=1&reverse=true&sort=scanTime"|jq '.[-1].complianceIssuesCount')
+complianceresult=$(curl -k -u $PCUSER:$PCPASS -H 'Content-Type: application/json' "$PC_CONSOLE/api/v1/registry?id=$ACR_FQDN/$IMAGE_NAME&limit=1&reverse=true&sort=scanTime"|jq '.[-1].complianceIssuesCount')
 
 if [[ "$vulnresult" == "0" ]] && [[ "$complianceresult" == "0" ]]; then
    echo "Registry Image scan passed!"
