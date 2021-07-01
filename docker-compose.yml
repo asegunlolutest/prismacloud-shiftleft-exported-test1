@@ -1,0 +1,8 @@
+version: '2'
+
+services:
+  evilpetclinic:
+    image: evilpetclinic
+    build:
+      context: ./
+      dockerfile: Dockerfile

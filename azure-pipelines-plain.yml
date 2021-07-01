@@ -1,0 +1,174 @@
+# Docker
+# Build and push an image to Azure Container Registry
+# https://docs.microsoft.com/azure/devops/pipelines/languages/docker
+
+#trigger:
+#- main
+
+resources:
+- repo: self
+
+variables:
+  # Prisma Cloud Credentials
+  # Add HTTP or HTTPS to the PC_CONSOLE value
+  PCUSER: ''
+  PCPASS: ''
+  PC_CONSOLE: ''
+
+  # Secret and Config Store Variables
+  ACR_NAME: ''
+  ACR_FQDN: ''
+  IMAGE_NAME: 'evilpetclinic:latest'
+  AKS_NAME: ''
+  SUB_ID: ''
+  RESOURCE_GRP: 'azlab-rg'
+  SERVICE_CONN: 'pc-shiftleft-azure-connection'
+
+  # Security Check Flags
+  PRE_BUILD_GIT_SCAN_FLAG: 'false'
+  PRE_BUILD_DOCKERFILE_SCAN_FLAG: '--soft-fail'
+  BUILD_IMAGE_SCAN_FLAG: 'false'
+  PRE_DEPLOY_TERRAFORM_SCAN_FLAG: '--soft-fail'
+  PRE_DEPLOY_ARM_SCAN_FLAG: '--soft-fail'
+  PRE_DEPLOY_REG_SCAN_FLAG: '1'
+
+  # Git Repo Scan Variables
+  REPO_ID: $(System.CollectionUri)$(System.TeamProject)/$(Build.Repository.Name)/$(Build.SourceBranchName)
+
+  # Agent VM image name
+  vmImageName: 'ubuntu-latest'
+
+stages:
+- stage: Pre_Build
+  displayName: PRE_BUILD_STAGE
+  jobs:  
+  - job: Pre_Build_Checks
+    displayName: PRE_BUILD_SECURITY_CHECKS
+    pool:
+      vmImage: $(vmImageName)
+    steps:
+    
+    - task: AzureKeyVault@2
+      inputs:
+        azureSubscription: '$(SERVICE_CONN)'
+        KeyVaultName: $(KEYVAULT_NAME)
+        SecretsFilter: '*'
+        RunAsPreJob: false
+      enabled: 'false'
+
+    - task: Bash@3
+      displayName: Install TwistCLI
+      inputs:
+        filePath: '$(Build.SourcesDirectory)/files/downloadTwistCLI.sh'
+      enabled: 'true'
+    
+    # PRE_BUILD_CHECK_1: Run the Prisma Cloud Git Repo Scan for Code Dependencies
+    - task: Bash@3
+      displayName: Prisma Cloud - Scan Code Repo
+      inputs:
+        filePath: '$(Build.SourcesDirectory)/files/scanGitRepo.sh'
+      enabled: 'true'
+    
+    # PRE_BUILD_CHECK_2: Run the Checkov Static Code Analysis for Dockerfile
+    - script: docker run --tty --volume /$(System.DefaultWorkingDirectory)/Dockerfile:/tf/Dockerfile bridgecrew/checkov --directory /tf $(PRE_BUILD_DOCKERFILE_SCAN_FLAG)
+      displayName: Prisma Cloud - Scan Dockerfile
+      enabled: 'true'
+
+- stage: Build
+  displayName: BUILD_STAGE
+  jobs:  
+  - job: Build_App
+    displayName: BUILD_AND SCAN_IMAGE
+    pool:
+      vmImage: $(vmImageName)
+    steps:
+    - task: Maven@3
+      displayName: Maven - Build Application
+      inputs:
+        mavenPomFile: 'pom.xml'
+        publishJUnitResults: false
+        testResultsFiles: '**/surefire-reports/TEST-*.xml'
+        javaHomeOption: 'JDKVersion'
+        jdkVersionOption: '1.11'
+        mavenVersionOption: 'Default'
+        mavenAuthenticateFeed: false
+        effectivePomSkip: false
+        sonarQubeRunAnalysis: false
+      enabled: 'true'
+    
+    - task: DockerCompose@0
+      displayName: Docker Compose - Build Container Image
+      inputs:
+        containerregistrytype: 'Azure Container Registry'
+        azureSubscription: 'pc-shiftleft-azure-connection'
+        azureContainerRegistry: '{"loginServer":"$(ACR_FQDN)", "id" : "/subscriptions/$(SUB_ID)/resourceGroups/$(RESOURCE_GRP)/providers/Microsoft.ContainerRegistry/registries/$(ACR_NAME)"}'
+        dockerComposeFile: '$(Build.SourcesDirectory)/docker-compose.yml'
+        action: 'Build services'
+        additionalImageTags: '$(Build.BuildId)'
+      enabled: 'true'
+        
+    - task: Bash@3
+      displayName: Prisma Cloud - Scan Container Image
+      inputs:
+        filePath: '$(Build.SourcesDirectory)/files/scanImage.sh'
+      enabled: 'true'
+
+    - task: DockerCompose@0
+      displayName: Docker Compose - Push Image into Registry
+      inputs:
+        containerregistrytype: 'Azure Container Registry'
+        azureSubscription: 'pc-shiftleft-azure-connection'
+        azureContainerRegistry: '{"loginServer":"$(ACR_FQDN)", "id" : "/subscriptions/$(SUB_ID)/$(RESOURCE_GRP)/providers/Microsoft.ContainerRegistry/registries/$(ACR_NAME)"}'
+        dockerComposeFile: '$(Build.SourcesDirectory)/docker-compose.yml'
+        action: 'Push services'
+        additionalImageTags: '$(Build.BuildId)'
+      enabled: 'true'
+    
+- stage: Pre_Deploy
+  displayName: PRE_DEPLOY_STAGE
+  jobs:  
+  - job: Prepare_For_Deployment
+    displayName: PRE_DEPLOY_SECURITY_CHECKS
+    pool:
+      vmImage: $(vmImageName)
+    steps:
+      - script: docker run --tty --volume /$(System.DefaultWorkingDirectory)/terraform:/tf bridgecrew/checkov --directory /tf $(PRE_DEPLOY_TERRAFORM_SCAN_FLAG)
+        displayName: Prisma Cloud - Terraform Template Analysis
+        enabled: 'true'
+
+      - script: docker run --tty --volume /$(System.DefaultWorkingDirectory)/armtemplate:/tf bridgecrew/checkov --directory /tf $(PRE_DEPLOY_ARM_SCAN_FLAG)
+        displayName: Prisma Cloud - ARM Template Analysis
+        enabled: 'true'
+
+      - task: Bash@3
+        displayName: Prisma Cloud - Registry Image Scan Check
+        inputs:
+          filePath: '$(Build.SourcesDirectory)/files/registryScanCheck.sh'
+        enabled: 'true'
+
+- stage: Deploy
+  displayName: DEPLOY_STAGE
+  jobs:  
+  - job: Deploy_App_To_K8s
+    displayName: DEPLOY_APP_WITH_SECURITY_POLICY
+    pool:
+      vmImage: $(vmImageName)
+    steps:
+      - task: Bash@3
+        displayName: Prisma Cloud - Apply App Security Policies
+        inputs:
+          filePath: '$(Build.SourcesDirectory)/files/addPolicies.sh'
+        enabled: 'false'
+      
+      - task: Kubernetes@1
+        displayName: Kubectl - Deploy App to K8s
+        inputs:
+          connectionType: 'Azure Resource Manager'
+          azureSubscriptionEndpoint: 'pc-shiftleft-azure-connection'
+          azureResourceGroup: '$(RESOURCE_GRP)'
+          kubernetesCluster: '$(AKS_NAME)'
+          command: 'apply'
+          useConfigurationFile: true
+          configuration: '$(Build.SourcesDirectory)/files/deploy.yml'
+          secretType: 'dockerRegistry'
+          containerRegistryType: 'Azure Container Registry'

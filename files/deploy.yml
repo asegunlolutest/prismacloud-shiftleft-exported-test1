@@ -1,0 +1,48 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: evil
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: evilpetclinic
+  namespace: evil
+  labels:
+    app: evilpetclinic
+    name: evilpetclinic
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: evilpetclinic
+  strategy: {}
+  template:
+    metadata:
+      name: evilpetclinic
+      namespace: evil
+      creationTimestamp: null
+      labels:
+        app: evilpetclinic
+    spec:
+      containers:
+      - image: pccacr01.azurecr.io/evilpetclinic:latest
+        name: evilpetclinic
+        resources: {}
+      imagePullSecrets:
+      - name: regcred
+status: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: evilpetclinic
+  namespace: evil
+spec:
+  selector:
+    app: evilpetclinic
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 80
+  type: LoadBalancer
